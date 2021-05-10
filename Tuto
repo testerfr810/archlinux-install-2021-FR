@@ -1,0 +1,283 @@
+############# INSTALLATION ARCHLINUX SIMPLE (sans UEFI) #############
+
+loadkeys fr-pc
+
+timedatectl set-timezone Europe/Paris
+
+timedatectl set-ntp true
+
+timedatectl status
+
+
+############# RESEAU #############
+
+ip addr show
+iwctl
+device list
+    exemple:
+station wlan0 scan
+station wlan0 get-networks
+station wlan0 connect "Nom du RESEAU"
+CTRL+D pour quitter la commande
+ip addr show
+ip a
+ping archlinux.org
+ping c- 5 8.8.8.8
+
+####################################################
+####################################################
+############# Preparation Partitions sans UEFI #####
+
+lsblk
+fdisk -l
+fdisk /dev/sda
+p
+o
+n
+p
+t
+8e
+a
+w
+lsblk
+fdisk -l
+pvcreate --dataalignment 1m /dev/sda1
+vgcreate volgroup0 /dev/sda1
+lvcreate -L 30GB volgroup0 -n lv_root
+lvcreate -l 100%FREE volgroup0 -n lv_home
+modprobe dm_mod
+vgscan
+vgchange -ay
+
+############# Formatage #############
+
+mkfs.ext4 /dev/volgroup0/lv_root
+mount /dev/volgroup0/lv_root /mnt
+
+mkfs.ext4 /dev/volgroup0/lv_home
+mkdir /mnt/home
+mount /dev/volgroup0/lv_home /mnt/home
+mkdir /mnt/etc
+genfstab -U -p /mnt >> /mnt/etc/fstab
+cat /mnt/etc/fstab
+
+####################################################
+####################################################
+############# INSTALLATION ARCHLINUX UEFI ##########
+
+lsblk
+fdisk -l
+fdisk /dev/sda
+p
+g
+n
+2048
++500M
+t
+1
+p
+n
+1026048
+t
+2
+30
+p
+w
+
+############# Formatage #############
+
+mkfs.fat -F32 /dev/sda1
+
+pvcreate --dataalignment 1m /dev/sda2
+vgcreate volgroup0 /dev/sda2
+
+lvcreate -L 30GB volgroup0 -n lv_root
+lvcreate -l 100%FREE volgroup0 -n lv_home
+
+modprobe dm_mod
+vgscan
+vgchange -ay
+
+mkfs.ext4 /dev/volgroup0/lv_root
+mount /dev/volgroup0/lv_root /mnt
+
+mkfs.ext4 /dev/volgroup0/lv_home
+mkdir /mnt/home
+mount /dev/volgroup0/lv_home /mnt
+mkdir /mnt/etc
+
+genfstab -U -p /mnt >> /mnt/etc/fstab
+cat /mnt/etc/fstab
+
+##################################################
+##################################################
+############# Installation ArchLinux #############
+
+pacman -S reflector
+reflector --verbose --country France --country Germany -l 10 -p https --sort rate --save /etc/pacman.d/mirrorlist
+
+pacstrap -i /mnt base
+arch-chroot /mnt
+pacman -S linux linux-headers linux-lts linux-lts-headers
+pacman -S nano vim neovim pulseaudio pulseaudio-alsaeip gzip p7zip pcmanfm openssh git sudo dialog intel-ucode networkmanager network-manager-applet wpa_supplicant wireless_tools netctl dhcpcd systemd lvm2 htop terminator gtop
+
+systemctl enable NetworkManager
+
+nano /ect/mkinitcpio.conf
+
+"""" rechercher ligne""""
+
+    HOOKS=(base udev autodetect modconf block filesystems keyboard fsck)
+
+"""" après block ajouter """"
+
+    HOOKS=(base udev autodetect modconf block lvm2 filesystems keyboard fsck)
+
+"""" après block ajouter seulement si vous avais cryter """"
+
+    HOOKS=(base udev autodetect modconf block encrypt filesystems keyboard fsck)
+
+mkinitcpio -p linux
+
+mkinitcpio -p linux-lts
+
+ln -s /usr/share/zoneinfo/Europe/Paris /etc/localtime
+hwclock --systohc --utc
+nano /etc/locale.gen //decomenter Fr
+locale-gen 
+nano /etc/locale.conf
+
+//entrer
+LANG=fr_FR.UTF-8
+
+nano /etc/vconsole.conf
+//entrer
+KEYMAP=fr-latin9
+
+passwd
+"""" entrer le mot de passe root """"
+
+useradd -m -g NOM_UTILISATEUR -G wheel
+passwd
+"""" entrer le mot de passe utilisateur """"
+
+which sudo
+EDITOR=nano visudo
+"""" decommenter #%wheel et enregister """"
+
+##################################################
+##################################################
+#############   Installation GRUB   ##############
+ 
+    """" PAS UEFI """"
+pacman -S grub dosfstools os-prober mtools
+grub-install --target=i386-pc --recheck /dev/sda
+
+    """" UEFI """"
+pacman -S grub efibootmgr dosfstools os-prober mtools
+mkdir /boot/EFI
+mount /dev/sda1 /boot/EFI
+grub-install --target=x86_64-efi --bootloader-id=grub_uefi --recheck
+ls -l /boot/grub
+mkdir /boot/grub/locale
+cp /usr/share/locale/fr\@quot/LC_MESSAGES/grub.mo /boot/grub/locale/fr.mo
+
+"""" si crypter decommenter cette ligne """"
+nano /etc/default/grub
+"""" si crypter decommenter cette ligne """"
+GRUB_ENABLE_CRYPTODISK=y
+"""" modififier cette ligne """"
+GRUB_COMDLINE_LINUX_DEFAULT="loglevel=3 quiet"
+GRUB_COMDLINE_LINUX_DEFAULT="cryptdevice=/dev/sda3:volgroup0:allow-discard loglevel=3 quiet"
+
+grub-mkconfig -o /boot/grub/grub.cfg
+exit
+umount -a
+reboot
+
+#############   Activation SWAP   ##############
+
+Connecter en tant qu'utilisteur
+
+su
+cd /root
+dd if=/dev/zero of=/swapfile bs=1M count=2048 status=progress
+chmod 600 /swapfile
+mkswap /swapfile
+cp /etc/fstab /etc/fstab.bak
+echo '/swapfile none swap sw 0 0' | tee -a /etc/fstab
+cat /etc/fstab
+free -m
+mount -a
+free -m 
+swapon -a
+free -m
+
+#############   DATE HEURES   ##############
+
+timedatectl set-timezone Europe/Paris
+systemctl enable systemd-timesyncd
+
+#############   HOSTNAME (nom de la machine)   ##############
+
+hostnamectl set-hostname shad0w
+cat /etc/hostname
+nano /etc/hosts
+127.0.0.1   localhost
+127.0.0.1   shad0w
+hostnamectl
+
+#############   PILOTE CPU   ##############
+
+pour INTEL
+
+pacman -S intel-ucode
+pacman -S nvidia linux-lts nvidia-lts
+pour AMD
+
+pacman -S amd-ucode
+pacman -S mesa
+
+#############   XORG   ##############
+
+pacman -S xorg-server
+
+#############   VIRTUALBOX   ##############
+
+pacman -S virtualbox-guest-utils xf86-video-vmware
+systemctl enable vboxservice
+
+#############   ENVIRONNEMENT DE BUREAU GNOME   ##############
+
+pacman -S gnome gnome-tweaks
+systemctl enable gdm
+reboot
+
+#############   ENVIRONNEMENT DE BUREAU PLASMA   ##############
+
+pacman -S plasma-meta kde-applications
+systemctl enable sddm
+reboot
+
+#############   ENVIRONNEMENT DE BUREAU XFCE   ##############
+
+pacman -S xfce4 xfce4-goodies
+pacman -S lightdm lightdm-gtk-greeter lightdm-webkit2-greeter
+systemctl enable lightdm
+reboot
+
+#############   ENVIRONNEMENT DE BUREAU MATE   ##############
+
+pacman -S mate mate-extra
+pacman -S lightdm lightdm-gtk-greeter lightdm-webkit2-greeter
+systemctl enable lightdm
+reboot
+
+#############   ENVIRONNEMENT DE BUREAU OPENBOX   ##############
+
+pacman -S openbox obconf polybar tint2 rofi xterm terminator termite nitrogen geany
+pacman -S lightdm lightdm-gtk-greeter lightdm-webkit2-greeter
+systemctl enable lightdm
+reboot
+
+
